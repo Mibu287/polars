@@ -173,8 +173,8 @@ impl GroupsIdx {
 
     pub(crate) unsafe fn get_unchecked(&self, index: usize) -> BorrowIdxItem {
         let first = *self.first.get_unchecked(index);
-        let begin= *self.indexes.get_unchecked(index) as usize;
-        let end= *self.indexes.get_unchecked(index + 1) as usize;
+        let begin = *self.indexes.get_unchecked(index) as usize;
+        let end = *self.indexes.get_unchecked(index + 1) as usize;
         let all = &self.all[begin..end];
         (first, all)
     }
@@ -199,36 +199,72 @@ impl FromIterator<IdxItem> for GroupsIdx {
     }
 }
 
+mod groupsidx_iter {
+    use super::{BorrowIdxItem, GroupsIdx, IdxItem};
+
+    pub(crate) struct BorrowedIter<'a> {
+        iter: &'a GroupsIdx,
+        curr_idx: usize,
+    }
+
+    impl<'a> Iterator for BorrowedIter<'a> {
+        type Item = BorrowIdxItem<'a>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.curr_idx >= self.iter.len() {
+                return None;
+            }
+
+            // Safety: curr_idx is checked above
+            let result = unsafe { self.iter.get_unchecked(self.curr_idx) };
+            self.curr_idx += 1;
+            Some(result)
+        }
+    }
+
+    pub(crate) struct IntoIter {
+        iter: GroupsIdx,
+        curr_idx: usize,
+    }
+
+    impl Iterator for IntoIter {
+        type Item = IdxItem;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            if self.curr_idx >= self.iter.len() {
+                return None;
+            }
+
+            // Safety: curr_idx is checked above
+            let (first, mut all) = unsafe { self.iter.get_unchecked(self.curr_idx) };
+            let all = all.to_vec();
+            self.curr_idx += 1;
+            Some((first, all))
+        }
+    }
+}
+
 impl<'a> IntoIterator for &'a GroupsIdx {
     type Item = BorrowIdxItem<'a>;
-    type IntoIter = std::iter::Zip<
-        std::iter::Copied<std::slice::Iter<'a, IdxSize>>,
-        std::slice::Iter<'a, Vec<IdxSize>>,
-    >;
+    type IntoIter = groupsidx_iter::BorrowedIter<'a>;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.first.iter().copied().zip(self.all.iter())
+        Self::IntoIter {
+            iter: &self,
+            curr_idx: 0,
+        }
     }
 }
 
 impl IntoIterator for GroupsIdx {
     type Item = IdxItem;
-    type IntoIter = std::iter::Zip<std::vec::IntoIter<IdxSize>, std::vec::IntoIter<Vec<IdxSize>>>;
+    type IntoIter = groupsidx_iter::IntoIter;
 
     fn into_iter(mut self) -> Self::IntoIter {
-        let all: Vec<Vec<IdxSize>> = self
-            .first
-            .iter()
-            .enumerate()
-            .map(|(idx, v)| unsafe {
-                let start = *self.indexes.get_unchecked(idx) as usize;
-                let end = *self.indexes.get_unchecked(idx + 1) as usize;
-                let all_vals = std::mem::take(&mut self.all[start..end].to_vec());
-                all_vals
-            })
-            .collect();
-
-        self.first.into_iter().zip(all)
+        Self::IntoIter {
+            iter: self,
+            curr_idx: 0,
+        }
     }
 }
 
