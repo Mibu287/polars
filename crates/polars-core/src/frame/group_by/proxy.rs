@@ -2,7 +2,6 @@ use std::mem::ManuallyDrop;
 use std::ops::Deref;
 
 use polars_arrow::utils::CustomIterTools;
-use polars_utils::sync::SyncPtr;
 use rayon::iter::plumbing::UnindexedConsumer;
 use rayon::prelude::*;
 
@@ -14,30 +13,15 @@ use crate::POOL;
 /// this make sorting fast.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GroupsIdx {
+    // Invariants: first.len() + 1 == indexes.len()
     pub(crate) sorted: bool,
     first: Vec<IdxSize>,
-    all: Vec<Vec<IdxSize>>,
+    all: Vec<IdxSize>,
+    indexes: Vec<IdxSize>,
 }
 
 pub type IdxItem = (IdxSize, Vec<IdxSize>);
 pub type BorrowIdxItem<'a> = (IdxSize, &'a Vec<IdxSize>);
-
-impl Drop for GroupsIdx {
-    fn drop(&mut self) {
-        let v = std::mem::take(&mut self.all);
-        // ~65k took approximately 1ms on local machine, so from that point we drop on other thread
-        // to stop query from being blocked
-        #[cfg(not(target_family = "wasm"))]
-        if v.len() > 1 << 16 {
-            std::thread::spawn(move || drop(v));
-        } else {
-            drop(v);
-        }
-
-        #[cfg(target_family = "wasm")]
-        drop(v);
-    }
-}
 
 impl From<Vec<IdxItem>> for GroupsIdx {
     fn from(v: Vec<IdxItem>) -> Self {
@@ -48,103 +32,86 @@ impl From<Vec<IdxItem>> for GroupsIdx {
 impl From<Vec<(Vec<IdxSize>, Vec<Vec<IdxSize>>)>> for GroupsIdx {
     fn from(v: Vec<(Vec<IdxSize>, Vec<Vec<IdxSize>>)>) -> Self {
         // we have got the hash tables so we can determine the final
-        let cap = v.iter().map(|v| v.0.len()).sum::<usize>();
-        let offsets = v
-            .iter()
-            .scan(0_usize, |acc, v| {
-                let out = *acc;
-                *acc += v.0.len();
-                Some(out)
-            })
-            .collect::<Vec<_>>();
-        let mut global_first = Vec::with_capacity(cap);
-        let global_first_ptr = unsafe { SyncPtr::new(global_first.as_mut_ptr()) };
-        let mut global_all = Vec::with_capacity(cap);
-        let global_all_ptr = unsafe { SyncPtr::new(global_all.as_mut_ptr()) };
-
-        POOL.install(|| {
-            v.into_par_iter().zip(offsets).for_each(
-                |((local_first_vals, mut local_all_vals), offset)| unsafe {
-                    let global_first: *mut IdxSize = global_first_ptr.get();
-                    let global_all: *mut Vec<IdxSize> = global_all_ptr.get();
-                    let global_first = global_first.add(offset);
-                    let global_all = global_all.add(offset);
-
-                    std::ptr::copy_nonoverlapping(
-                        local_first_vals.as_ptr(),
-                        global_first,
-                        local_first_vals.len(),
-                    );
-                    std::ptr::copy_nonoverlapping(
-                        local_all_vals.as_ptr(),
-                        global_all,
-                        local_all_vals.len(),
-                    );
-                    // local_all_vals: Vec<Vec<IdxSize>>
-                    // we just copied the contents: Vec<IdxSize> to a new buffer
-                    // now, we want to free the outer vec, without freeing
-                    // the inner vecs as they are moved, so we set the len to 0
-                    local_all_vals.set_len(0);
-                },
-            );
+        let (first_cap, all_cap) = v.iter().fold((0_usize, 0_usize), |acc, elem| {
+            let (first_cap, all_cap) = acc;
+            let (first, all) = elem;
+            let first_cap = first_cap + first.len();
+            let all_cap = all_cap + all.iter().map(|v| v.len()).sum::<usize>();
+            (first_cap, all_cap)
         });
-        unsafe {
-            global_all.set_len(cap);
-            global_first.set_len(cap);
+
+        let mut first = Vec::with_capacity(first_cap);
+        let mut indexes = Vec::with_capacity(first_cap + 1);
+        indexes.push(0 as IdxSize);
+        let mut all = Vec::with_capacity(all_cap);
+
+        for (first_vals, all_vals) in v {
+            first.extend(first_vals);
+
+            for all_val in all_vals {
+                all.extend(all_val);
+                let curr_idx = indexes.last().unwrap().clone() as IdxSize;
+                let new_idx = curr_idx + all_val.len() as IdxSize;
+                indexes.push(new_idx);
+            }
         }
+
         GroupsIdx {
             sorted: false,
-            first: global_first,
-            all: global_all,
+            first,
+            all,
+            indexes,
         }
     }
 }
 
 impl From<Vec<Vec<IdxItem>>> for GroupsIdx {
     fn from(v: Vec<Vec<IdxItem>>) -> Self {
-        // single threaded flatten: 10% faster than `iter().flatten().collect()
-        // this is the multi-threaded impl of that
-        let (cap, offsets) = flatten::cap_and_offsets(&v);
-        let mut first = Vec::with_capacity(cap);
-        let first_ptr = first.as_ptr() as usize;
-        let mut all = Vec::with_capacity(cap);
-        let all_ptr = all.as_ptr() as usize;
-
-        POOL.install(|| {
-            v.into_par_iter()
-                .zip(offsets)
-                .for_each(|(mut inner, offset)| {
-                    unsafe {
-                        let first = (first_ptr as *const IdxSize as *mut IdxSize).add(offset);
-                        let all = (all_ptr as *const Vec<IdxSize> as *mut Vec<IdxSize>).add(offset);
-
-                        let inner_ptr = inner.as_mut_ptr();
-                        for i in 0..inner.len() {
-                            let (first_val, vals) = std::ptr::read(inner_ptr.add(i));
-                            std::ptr::write(first.add(i), first_val);
-                            std::ptr::write(all.add(i), vals);
-                        }
-                        // set len to 0 so that the contents will not get dropped
-                        // they are moved to `first` and `all`
-                        inner.set_len(0);
-                    }
+        let (first_cap, all_cap) =
+            v.iter()
+                .fold((0_usize, 0_usize), |(first_cap, all_cap), elem| {
+                    let first_cap = first_cap + elem.len();
+                    let all_cap = all_cap + elem.iter().map(|v| v.1.len()).sum::<usize>();
+                    (first_cap, all_cap)
                 });
-        });
-        unsafe {
-            all.set_len(cap);
-            first.set_len(cap);
+
+        let mut first = Vec::with_capacity(first_cap);
+        let mut indexes = Vec::with_capacity(first_cap + 1);
+        indexes.push(0 as IdxSize);
+        let mut all = Vec::with_capacity(all_cap);
+
+        for elem in v {
+            for (first_val, all_vals) in elem {
+                first.push(first_val);
+                all.extend(all_vals);
+                let curr_idx = indexes.last().unwrap().clone() as IdxSize;
+                let new_idx = curr_idx + all.len() as IdxSize;
+                indexes.push(new_idx);
+            }
         }
+
         GroupsIdx {
             sorted: false,
             first,
             all,
+            indexes,
         }
     }
 }
 
 impl GroupsIdx {
-    pub fn new(first: Vec<IdxSize>, all: Vec<Vec<IdxSize>>, sorted: bool) -> Self {
-        Self { sorted, first, all }
+    pub fn new(
+        first: Vec<IdxSize>,
+        all: Vec<IdxSize>,
+        indexes: Vec<IdxSize>,
+        sorted: bool,
+    ) -> Self {
+        Self {
+            sorted,
+            first,
+            all,
+            indexes,
+        }
     }
 
     pub fn sort(&mut self) {
@@ -212,12 +179,20 @@ impl GroupsIdx {
 
 impl FromIterator<IdxItem> for GroupsIdx {
     fn from_iter<T: IntoIterator<Item = IdxItem>>(iter: T) -> Self {
-        let (first, all) = iter.into_iter().unzip();
-        GroupsIdx {
+        let result = GroupsIdx {
             sorted: false,
-            first,
-            all,
-        }
+            first: Vec::new(),
+            all: Vec::new(),
+            indexes: vec![0 as IdxSize],
+        };
+
+        iter.into_iter().fold(result, |mut res, v| {
+            res.first.push(v.0);
+            res.all.extend(v.1.iter());
+            let new_idx = res.indexes.last().unwrap().clone() + (v.1.len() as IdxSize);
+            res.indexes.push(new_idx);
+            return res;
+        })
     }
 }
 
@@ -238,9 +213,19 @@ impl IntoIterator for GroupsIdx {
     type IntoIter = std::iter::Zip<std::vec::IntoIter<IdxSize>, std::vec::IntoIter<Vec<IdxSize>>>;
 
     fn into_iter(mut self) -> Self::IntoIter {
-        let first = std::mem::take(&mut self.first);
-        let all = std::mem::take(&mut self.all);
-        first.into_iter().zip(all)
+        let all: Vec<Vec<IdxSize>> = self
+            .first
+            .iter()
+            .enumerate()
+            .map(|(idx, v)| unsafe {
+                let start = *self.indexes.get_unchecked(idx) as usize;
+                let end = *self.indexes.get_unchecked(idx + 1) as usize;
+                let all_vals = std::mem::take(&mut self.all[start..end].to_vec());
+                all_vals
+            })
+            .collect();
+
+        self.first.into_iter().zip(all)
     }
 }
 
