@@ -6,7 +6,7 @@ use rayon::iter::plumbing::UnindexedConsumer;
 use rayon::prelude::*;
 
 use crate::prelude::*;
-use crate::utils::{flatten, slice_slice, NoNull};
+use crate::utils::{slice_slice, NoNull};
 use crate::POOL;
 
 /// Indexes of the groups, the first index is stored separately.
@@ -21,7 +21,7 @@ pub struct GroupsIdx {
 }
 
 pub type IdxItem = (IdxSize, Vec<IdxSize>);
-pub type BorrowIdxItem<'a> = (IdxSize, &'a Vec<IdxSize>);
+pub type BorrowIdxItem<'a> = (IdxSize, &'a [IdxSize]);
 
 impl From<Vec<IdxItem>> for GroupsIdx {
     fn from(v: Vec<IdxItem>) -> Self {
@@ -143,18 +143,19 @@ impl GroupsIdx {
         self.all = all;
         self.sorted = true
     }
+
     pub fn is_sorted_flag(&self) -> bool {
         self.sorted
     }
 
     pub fn iter(
         &self,
-    ) -> std::iter::Zip<std::iter::Copied<std::slice::Iter<IdxSize>>, std::slice::Iter<Vec<IdxSize>>>
+    ) -> std::iter::Zip<std::iter::Copied<std::slice::Iter<IdxSize>>, std::slice::Iter<&[IdxSize]>>
     {
         self.into_iter()
     }
 
-    pub fn all(&self) -> &[Vec<IdxSize>] {
+    pub fn all(&self) -> &Vec<IdxSize> {
         &self.all
     }
 
@@ -172,7 +173,9 @@ impl GroupsIdx {
 
     pub(crate) unsafe fn get_unchecked(&self, index: usize) -> BorrowIdxItem {
         let first = *self.first.get_unchecked(index);
-        let all = self.all.get_unchecked(index);
+        let begin= *self.indexes.get_unchecked(index) as usize;
+        let end= *self.indexes.get_unchecked(index + 1) as usize;
+        let all = &self.all[begin..end];
         (first, all)
     }
 }
