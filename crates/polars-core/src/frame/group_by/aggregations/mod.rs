@@ -154,10 +154,10 @@ where
     ca.slice(first as i64, len as usize)
 }
 
-/// Helper that combines the groups into a parallel iterator over `(first, all): (u32, &Vec<u32>)`.
+/// Helper that combines the groups into a parallel iterator over `(first, all): (u32, &[u32])`.
 pub fn _agg_helper_idx<T, F>(groups: &GroupsIdx, f: F) -> Series
 where
-    F: Fn((IdxSize, &Vec<IdxSize>)) -> Option<T::Native> + Send + Sync,
+    F: Fn((IdxSize, &[IdxSize])) -> Option<T::Native> + Send + Sync,
     T: PolarsNumericType,
     ChunkedArray<T>: IntoSeries,
 {
@@ -168,7 +168,7 @@ where
 /// Same helper as `_agg_helper_idx` but for aggregations that don't return an Option.
 pub fn _agg_helper_idx_no_null<T, F>(groups: &GroupsIdx, f: F) -> Series
 where
-    F: Fn((IdxSize, &Vec<IdxSize>)) -> T::Native + Send + Sync,
+    F: Fn((IdxSize, &[IdxSize])) -> T::Native + Send + Sync,
     T: PolarsNumericType,
     ChunkedArray<T>: IntoSeries,
 {
@@ -180,11 +180,11 @@ where
 /// this doesn't have traverse the `first: Vec<u32>` memory and is therefore faster.
 fn agg_helper_idx_on_all<T, F>(groups: &GroupsIdx, f: F) -> Series
 where
-    F: Fn(&Vec<IdxSize>) -> Option<T::Native> + Send + Sync,
+    F: Fn(&[IdxSize]) -> Option<T::Native> + Send + Sync,
     T: PolarsNumericType,
     ChunkedArray<T>: IntoSeries,
 {
-    let ca: ChunkedArray<T> = POOL.install(|| groups.all().into_par_iter().map(f).collect());
+    let ca: ChunkedArray<T> = POOL.install(|| groups.into_par_iter().map(|v| v.1).map(f).collect());
     ca.into_series()
 }
 
