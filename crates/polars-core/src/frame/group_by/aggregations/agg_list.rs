@@ -156,8 +156,9 @@ impl AggList for BooleanChunked {
             GroupsProxy::Idx(groups) => {
                 let mut builder =
                     ListBooleanChunkedBuilder::new(self.name(), groups.len(), self.len());
-                for idx in groups.all().iter() {
-                    let ca = { self.take_unchecked(idx) };
+                for idx in groups.iter() {
+                    let all_vals = idx.1;
+                    let ca = { self.take_unchecked(all_vals) };
                     builder.append(&ca)
                 }
                 builder.finish().into_series()
@@ -182,8 +183,9 @@ impl AggList for Utf8Chunked {
             GroupsProxy::Idx(groups) => {
                 let mut builder =
                     ListUtf8ChunkedBuilder::new(self.name(), groups.len(), self.len());
-                for idx in groups.all().iter() {
-                    let ca = { self.take_unchecked(idx) };
+                for idx in groups.iter() {
+                    let all_vals = idx.1;
+                    let ca = { self.take_unchecked(all_vals) };
                     builder.append(&ca)
                 }
                 builder.finish().into_series()
@@ -207,8 +209,9 @@ impl AggList for BinaryChunked {
             GroupsProxy::Idx(groups) => {
                 let mut builder =
                     ListBinaryChunkedBuilder::new(self.name(), groups.len(), self.len());
-                for idx in groups.all().iter() {
-                    let ca = { self.take_unchecked(idx) };
+                for idx in groups.iter() {
+                    let all_vals = idx.1;
+                    let ca = { self.take_unchecked(all_vals) };
                     builder.append(&ca)
                 }
                 builder.finish().into_series()
