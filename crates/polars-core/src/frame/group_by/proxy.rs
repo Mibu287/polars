@@ -155,6 +155,10 @@ impl GroupsIdx {
         self.into_iter()
     }
 
+    pub fn indexes(&self) -> &Vec<IdxSize> {
+        &self.indexes
+    }
+
     pub fn all(&self) -> &Vec<IdxSize> {
         &self.all
     }
@@ -623,9 +627,17 @@ impl GroupsProxy {
                     let ptr = all.as_ptr() as *mut _;
                     Vec::from_raw_parts(ptr, all.len(), all.len())
                 };
+
+                let indexes = unsafe {
+                    let indexes = slice_slice(groups.indexes(), offset, len + 1);
+                    let ptr = indexes.as_ptr() as *mut _;
+                    Vec::from_raw_parts(ptr, indexes.len(), indexes.len())
+                };
+
                 ManuallyDrop::new(GroupsProxy::Idx(GroupsIdx::new(
                     first,
                     all,
+                    indexes,
                     groups.is_sorted_flag(),
                 )))
             },
