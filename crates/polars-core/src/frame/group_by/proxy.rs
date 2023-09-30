@@ -203,31 +203,51 @@ mod groupsidx_iter {
     use super::{BorrowIdxItem, GroupsIdx, IdxItem};
 
     pub(crate) struct BorrowedIter<'a> {
-        iter: &'a GroupsIdx,
-        curr_idx: usize,
+        pub(crate) orig: &'a GroupsIdx,
+        pub(crate) start_idx: usize,
+        pub(crate) end_idx: usize,
     }
 
     impl<'a> Iterator for BorrowedIter<'a> {
         type Item = BorrowIdxItem<'a>;
 
         fn next(&mut self) -> Option<Self::Item> {
-            if self.curr_idx >= self.iter.len() {
+            if self.start_idx >= std::cmp::min(self.end_idx, self.orig.len()) {
                 return None;
             }
 
-            // Safety: curr_idx is checked above
-            let result = unsafe { self.iter.get_unchecked(self.curr_idx) };
-            self.curr_idx += 1;
+            // Safety: first_idx is checked above
+            let result = unsafe { self.orig.get_unchecked(self.start_idx) };
+            self.start_idx += 1;
             Some(result)
         }
     }
 
-    pub(crate) struct IntoIter {
+    impl<'a> DoubleEndedIterator for BorrowedIter<'a> {
+        fn next_back(&mut self) -> Option<Self::Item> {
+            if self.start_idx >= self.end_idx && self.end_idx >= self.orig.len() {
+                return None;
+            }
+
+            // Safety: end_idx is checked above
+            let result = unsafe { self.orig.get_unchecked(self.end_idx - 1) };
+            self.end_idx -= 1;
+            Some(result)
+        }
+    }
+
+    impl ExactSizeIterator for BorrowedIter<'_> {
+        fn len(&self) -> usize {
+            self.end_idx - self.start_idx
+        }
+    }
+
+    pub(crate) struct OwnedIter {
         iter: GroupsIdx,
         curr_idx: usize,
     }
 
-    impl Iterator for IntoIter {
+    impl Iterator for OwnedIter {
         type Item = IdxItem;
 
         fn next(&mut self) -> Option<Self::Item> {
@@ -250,15 +270,16 @@ impl<'a> IntoIterator for &'a GroupsIdx {
 
     fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
-            iter: &self,
-            curr_idx: 0,
+            orig: &self,
+            start_idx: 0,
+            end_idx: self.len(),
         }
     }
 }
 
 impl IntoIterator for GroupsIdx {
     type Item = IdxItem;
-    type IntoIter = groupsidx_iter::IntoIter;
+    type IntoIter = groupsidx_iter::OwnedIter;
 
     fn into_iter(mut self) -> Self::IntoIter {
         Self::IntoIter {
@@ -273,35 +294,93 @@ impl FromParallelIterator<IdxItem> for GroupsIdx {
     where
         I: IntoParallelIterator<Item = IdxItem>,
     {
-        let (first, all) = par_iter.into_par_iter().unzip();
-        GroupsIdx {
-            sorted: false,
-            first,
-            all,
+        par_iter.into_par_iter().collect::<Vec<_>>().into()
+    }
+}
+
+mod groupsidx_par_iter {
+    use rayon::iter::plumbing::{bridge_producer_consumer, Producer, UnindexedConsumer};
+    use rayon::prelude::ParallelIterator;
+
+    use super::{groupsidx_iter, BorrowIdxItem, GroupsIdx};
+
+    struct BorrowedProducer<'a> {
+        iter: groupsidx_iter::BorrowedIter<'a>,
+    }
+
+    impl BorrowedProducer<'_> {
+        fn new<'a>(iter: groupsidx_iter::BorrowedIter<'a>) -> Self {
+            Self { iter }
+        }
+
+        fn orig(&self) -> &GroupsIdx {
+            self.iter.orig
+        }
+    }
+
+    impl<'a> Producer for BorrowedProducer<'a> {
+        type Item = BorrowIdxItem<'a>;
+        type IntoIter = groupsidx_iter::BorrowedIter<'a>;
+
+        fn into_iter(self) -> Self::IntoIter {
+            self.iter
+        }
+
+        fn split_at(self, index: usize) -> (Self, Self) {
+            let left = groupsidx_iter::BorrowedIter {
+                orig: self.orig(),
+                start_idx: self.iter.start_idx,
+                end_idx: index,
+            };
+            let right = groupsidx_iter::BorrowedIter {
+                orig: self.orig(),
+                start_idx: index,
+                end_idx: self.iter.end_idx,
+            };
+            (Self { iter: left }, Self { iter: right })
+        }
+    }
+
+    pub(crate) struct BorrowedParIter<'a> {
+        iter: groupsidx_iter::BorrowedIter<'a>,
+    }
+
+    impl BorrowedParIter<'_> {
+        pub(crate) fn from_orig<'a>(orig: &'a GroupsIdx) -> Self {
+            Self {
+                iter: orig.into_iter(),
+            }
+        }
+    }
+
+    impl<'a> ParallelIterator for BorrowedParIter<'a> {
+        type Item = BorrowIdxItem<'a>;
+
+        fn drive_unindexed<C>(self, consumer: C) -> C::Result
+        where
+            C: UnindexedConsumer<Self::Item>,
+        {
+            let producer = BorrowedProducer { iter: self.iter };
+            bridge_producer_consumer(self.iter.len(), producer, consumer)
         }
     }
 }
 
 impl<'a> IntoParallelIterator for &'a GroupsIdx {
-    type Iter = rayon::iter::Zip<
-        rayon::iter::Copied<rayon::slice::Iter<'a, IdxSize>>,
-        rayon::slice::Iter<'a, Vec<IdxSize>>,
-    >;
+    type Iter = groupsidx_par_iter::BorrowedParIter<'a>;
     type Item = BorrowIdxItem<'a>;
 
     fn into_par_iter(self) -> Self::Iter {
-        self.first.par_iter().copied().zip(self.all.par_iter())
+        Self::Iter::from_orig(self)
     }
 }
 
 impl IntoParallelIterator for GroupsIdx {
-    type Iter = rayon::iter::Zip<rayon::vec::IntoIter<IdxSize>, rayon::vec::IntoIter<Vec<IdxSize>>>;
+    type Iter = rayon::vec::IntoIter<IdxItem>;
     type Item = IdxItem;
 
     fn into_par_iter(mut self) -> Self::Iter {
-        let first = std::mem::take(&mut self.first);
-        let all = std::mem::take(&mut self.all);
-        first.into_par_iter().zip(all.into_par_iter())
+        self.into_iter().collect::<Vec<_>>().into_par_iter()
     }
 }
 
