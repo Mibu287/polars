@@ -313,8 +313,8 @@ mod groupsidx_par_iter {
         iter: groupsidx_iter::BorrowedIter<'a>,
     }
 
-    impl BorrowedProducer<'_> {
-        fn new<'a>(iter: groupsidx_iter::BorrowedIter<'a>) -> Self {
+    impl<'a> BorrowedProducer<'a> {
+        fn new(iter: groupsidx_iter::BorrowedIter<'a>) -> Self {
             Self { iter }
         }
 
@@ -333,12 +333,12 @@ mod groupsidx_par_iter {
 
         fn split_at(self, index: usize) -> (Self, Self) {
             let left = groupsidx_iter::BorrowedIter {
-                orig: self.orig(),
+                orig: self.iter.orig,
                 start_idx: self.iter.start_idx,
                 end_idx: index,
             };
             let right = groupsidx_iter::BorrowedIter {
-                orig: self.orig(),
+                orig: self.iter.orig,
                 start_idx: index,
                 end_idx: self.iter.end_idx,
             };
@@ -350,8 +350,8 @@ mod groupsidx_par_iter {
         iter: groupsidx_iter::BorrowedIter<'a>,
     }
 
-    impl BorrowedParIter<'_> {
-        pub(crate) fn from_orig<'a>(orig: &'a GroupsIdx) -> Self {
+    impl<'a> BorrowedParIter<'a> {
+        pub(crate) fn from_orig(orig: &'a GroupsIdx) -> Self {
             Self {
                 iter: orig.into_iter(),
             }
@@ -365,8 +365,9 @@ mod groupsidx_par_iter {
         where
             C: UnindexedConsumer<Self::Item>,
         {
+            let number_of_items = self.iter.len();
             let producer = BorrowedProducer { iter: self.iter };
-            bridge_producer_consumer(self.iter.len(), producer, consumer)
+            bridge_producer_consumer(number_of_items, producer, consumer)
         }
     }
 }
