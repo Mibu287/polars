@@ -531,8 +531,10 @@ impl GroupsProxy {
     pub fn get(&self, index: usize) -> GroupsIndicator {
         match self {
             GroupsProxy::Idx(groups) => {
-                let first = groups.first[index];
-                let all = &groups.all[index];
+                let first = groups.first()[index];
+                let start_idx = groups.indexes()[index] as usize;
+                let end_idx = groups.indexes()[index + 1] as usize;
+                let all = &groups.all()[start_idx..end_idx];
                 GroupsIndicator::Idx((first, all))
             },
             GroupsProxy::Slice { groups, .. } => GroupsIndicator::Slice(groups[index]),
