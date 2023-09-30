@@ -148,10 +148,7 @@ impl GroupsIdx {
         self.sorted
     }
 
-    pub fn iter(
-        &self,
-    ) -> std::iter::Zip<std::iter::Copied<std::slice::Iter<IdxSize>>, std::slice::Iter<&[IdxSize]>>
-    {
+    pub fn iter(&self) -> groupsidx_iter::BorrowedIter<'_> {
         self.into_iter()
     }
 
