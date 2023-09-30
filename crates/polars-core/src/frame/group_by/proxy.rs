@@ -200,12 +200,12 @@ impl FromIterator<IdxItem> for GroupsIdx {
     }
 }
 
-mod groupsidx_iter {
+pub mod groupsidx_iter {
     use polars_arrow::trusted_len::TrustedLen;
 
     use super::{BorrowIdxItem, GroupsIdx, IdxItem};
 
-    pub(crate) struct BorrowedIter<'a> {
+    pub struct BorrowedIter<'a> {
         pub(crate) orig: &'a GroupsIdx,
         pub(crate) start_idx: usize,
         pub(crate) end_idx: usize,
@@ -247,9 +247,9 @@ mod groupsidx_iter {
         }
     }
 
-    pub(crate) struct OwnedIter {
-        iter: GroupsIdx,
-        curr_idx: usize,
+    pub struct OwnedIter {
+        pub(crate) iter: GroupsIdx,
+        pub(crate) curr_idx: usize,
     }
 
     impl Iterator for OwnedIter {
@@ -303,13 +303,13 @@ impl FromParallelIterator<IdxItem> for GroupsIdx {
     }
 }
 
-mod groupsidx_par_iter {
+pub mod groupsidx_par_iter {
     use rayon::iter::plumbing::{bridge_producer_consumer, Producer, UnindexedConsumer};
     use rayon::prelude::ParallelIterator;
 
     use super::{groupsidx_iter, BorrowIdxItem, GroupsIdx};
 
-    struct BorrowedProducer<'a> {
+    pub struct BorrowedProducer<'a> {
         iter: groupsidx_iter::BorrowedIter<'a>,
     }
 
@@ -346,7 +346,7 @@ mod groupsidx_par_iter {
         }
     }
 
-    pub(crate) struct BorrowedParIter<'a> {
+    pub struct BorrowedParIter<'a> {
         iter: groupsidx_iter::BorrowedIter<'a>,
     }
 
