@@ -261,7 +261,7 @@ pub mod groupsidx_iter {
             }
 
             // Safety: curr_idx is checked above
-            let (first, mut all) = unsafe { self.iter.get_unchecked(self.curr_idx) };
+            let (first, all) = unsafe { self.iter.get_unchecked(self.curr_idx) };
             let all = all.to_vec();
             self.curr_idx += 1;
             Some((first, all))
@@ -286,7 +286,7 @@ impl IntoIterator for GroupsIdx {
     type Item = IdxItem;
     type IntoIter = groupsidx_iter::OwnedIter;
 
-    fn into_iter(mut self) -> Self::IntoIter {
+    fn into_iter(self) -> Self::IntoIter {
         Self::IntoIter {
             iter: self,
             curr_idx: 0,
@@ -311,16 +311,6 @@ pub mod groupsidx_par_iter {
 
     pub struct BorrowedProducer<'a> {
         iter: groupsidx_iter::BorrowedIter<'a>,
-    }
-
-    impl<'a> BorrowedProducer<'a> {
-        fn new(iter: groupsidx_iter::BorrowedIter<'a>) -> Self {
-            Self { iter }
-        }
-
-        fn orig(&self) -> &GroupsIdx {
-            self.iter.orig
-        }
     }
 
     impl<'a> Producer for BorrowedProducer<'a> {
@@ -385,7 +375,7 @@ impl IntoParallelIterator for GroupsIdx {
     type Iter = rayon::vec::IntoIter<IdxItem>;
     type Item = IdxItem;
 
-    fn into_par_iter(mut self) -> Self::Iter {
+    fn into_par_iter(self) -> Self::Iter {
         self.into_iter().collect::<Vec<_>>().into_par_iter()
     }
 }
