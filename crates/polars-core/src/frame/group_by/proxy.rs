@@ -478,15 +478,20 @@ impl GroupsProxy {
     pub fn take_group_lasts(self) -> Vec<IdxSize> {
         match self {
             GroupsProxy::Idx(groups) => {
-                groups
-                    .all
-                    .iter()
-                    .map(|idx| {
-                        // safety:
-                        // idx has at least one eletment, so -1 is always in bounds
-                        unsafe { *idx.get_unchecked(idx.len() - 1) }
-                    })
-                    .collect()
+                if groups.len() <= 1 {
+                    Vec::default()
+                } else {
+                    let indexes = groups.indexes();
+                    let idx_len = indexes.len();
+
+                    // Safety: Bounds are checked
+                    // groups.len() > 1 ==> groups.indexes().len() > 2
+                    // ==> groups.indexes has at least 2 elements
+                    let start_idx = *unsafe { indexes.get_unchecked(idx_len - 2) } as usize;
+                    let end_idx = *unsafe { indexes.get_unchecked(idx_len - 1) } as usize;
+
+                    groups.all[start_idx..end_idx].to_vec()
+                }
             },
             GroupsProxy::Slice { groups, .. } => groups
                 .into_iter()
