@@ -201,6 +201,8 @@ impl FromIterator<IdxItem> for GroupsIdx {
 }
 
 mod groupsidx_iter {
+    use polars_arrow::trusted_len::TrustedLen;
+
     use super::{BorrowIdxItem, GroupsIdx, IdxItem};
 
     pub(crate) struct BorrowedIter<'a> {
@@ -223,6 +225,8 @@ mod groupsidx_iter {
             Some(result)
         }
     }
+
+    unsafe impl TrustedLen for BorrowedIter<'_> {}
 
     impl<'a> DoubleEndedIterator for BorrowedIter<'a> {
         fn next_back(&mut self) -> Option<Self::Item> {
