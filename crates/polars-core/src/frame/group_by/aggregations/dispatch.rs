@@ -183,9 +183,9 @@ impl Series {
         let out = match groups {
             GroupsProxy::Idx(groups) => {
                 let indices = groups
-                    .all()
                     .iter()
-                    .map(|idx| {
+                    .map(|value| {
+                        let idx = value.1;
                         if idx.is_empty() {
                             None
                         } else {
