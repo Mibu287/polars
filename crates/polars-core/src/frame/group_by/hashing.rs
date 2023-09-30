@@ -88,7 +88,19 @@ fn finish_group_order_vecs(
     if sorted {
         if vecs.len() == 1 {
             let (first, all) = vecs.pop().unwrap();
-            return GroupsProxy::Idx(GroupsIdx::new(first, all, true));
+            let (all, indexes) = all.iter().fold(
+                (Vec::new(), vec![0 as IdxSize]),
+                |(mut all, mut indexes), all_vals| {
+                    all.extend(all_vals);
+
+                    let curr_idx = *indexes.last().unwrap();
+                    let next_idx = curr_idx + all_vals.len() as IdxSize;
+                    indexes.push(next_idx);
+
+                    (all, indexes)
+                },
+            );
+            return GroupsProxy::Idx(GroupsIdx::new(first, all, indexes, true));
         }
 
         let cap = vecs.iter().map(|v| v.0.len()).sum::<usize>();

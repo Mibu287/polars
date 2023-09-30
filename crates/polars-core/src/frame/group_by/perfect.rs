@@ -181,7 +181,18 @@ where
 
         // NOTE! we set sorted here!
         // this happens to be true for `fast_unique` categoricals
-        GroupsProxy::Idx(GroupsIdx::new(first, groups, true))
+        let (all, indexes) = groups.iter().fold(
+            (Vec::default(), vec![0 as IdxSize]),
+            |(mut all, mut indexes), group| {
+                all.extend(group);
+
+                let curr_idx = indexes.last().unwrap();
+                let next_idx = curr_idx + group.len() as IdxSize;
+                indexes.push(next_idx);
+                (all, indexes)
+            },
+        );
+        GroupsProxy::Idx(GroupsIdx::new(first, all, indexes, true))
     }
 }
 
