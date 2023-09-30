@@ -49,7 +49,7 @@ impl From<Vec<(Vec<IdxSize>, Vec<Vec<IdxSize>>)>> for GroupsIdx {
             first.extend(first_vals);
 
             for all_val in all_vals {
-                all.extend(all_val);
+                all.extend(all_val.iter());
                 let curr_idx = indexes.last().unwrap().clone() as IdxSize;
                 let new_idx = curr_idx + all_val.len() as IdxSize;
                 indexes.push(new_idx);
