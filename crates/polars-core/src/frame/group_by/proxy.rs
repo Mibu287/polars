@@ -29,6 +29,43 @@ impl From<Vec<IdxItem>> for GroupsIdx {
     }
 }
 
+mod internal {
+    use super::IdxSize;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(crate) enum VerifyGroupsIdx {
+        Ok,
+        LengthErr,
+        MonotonicErr,
+        IndexErr,
+    }
+
+    pub(crate) fn verify_groups_idx(
+        first: &Vec<IdxSize>,
+        all: &Vec<IdxSize>,
+        indexes: &Vec<IdxSize>,
+    ) -> VerifyGroupsIdx {
+        // Length check
+        if first.len() + 1 != indexes.len() {
+            return VerifyGroupsIdx::LengthErr;
+        }
+
+        // indexes must be strictly monotonically increasing
+        if !indexes.windows(2).all(|w| w[0] < w[1]) {
+            return VerifyGroupsIdx::MonotonicErr;
+        }
+
+        // Last index must not be greater than the length of all if groups is not empty
+        if all.len() > 0 && *indexes.last().unwrap() > all.len() as IdxSize {
+            return VerifyGroupsIdx::IndexErr;
+        }
+
+        VerifyGroupsIdx::Ok
+    }
+}
+
+use internal::{verify_groups_idx, VerifyGroupsIdx};
+
 impl From<Vec<(Vec<IdxSize>, Vec<Vec<IdxSize>>)>> for GroupsIdx {
     fn from(v: Vec<(Vec<IdxSize>, Vec<Vec<IdxSize>>)>) -> Self {
         // we have got the hash tables so we can determine the final
@@ -55,6 +92,11 @@ impl From<Vec<(Vec<IdxSize>, Vec<Vec<IdxSize>>)>> for GroupsIdx {
                 indexes.push(new_idx);
             }
         }
+
+        debug_assert_eq!(
+            verify_groups_idx(&first, &all, &indexes),
+            VerifyGroupsIdx::Ok
+        );
 
         GroupsIdx {
             sorted: false,
@@ -84,11 +126,14 @@ impl From<Vec<Vec<IdxItem>>> for GroupsIdx {
             for (first_val, all_vals) in elem {
                 first.push(first_val);
                 all.extend(all_vals);
-                let curr_idx = indexes.last().unwrap().clone() as IdxSize;
-                let new_idx = curr_idx + all.len() as IdxSize;
-                indexes.push(new_idx);
+                indexes.push(all.len() as IdxSize);
             }
         }
+
+        debug_assert_eq!(
+            verify_groups_idx(&first, &all, &indexes),
+            VerifyGroupsIdx::Ok
+        );
 
         GroupsIdx {
             sorted: false,
@@ -106,6 +151,11 @@ impl GroupsIdx {
         indexes: Vec<IdxSize>,
         sorted: bool,
     ) -> Self {
+        debug_assert_eq!(
+            verify_groups_idx(&first, &all, &indexes),
+            VerifyGroupsIdx::Ok
+        );
+
         Self {
             sorted,
             first,
@@ -130,18 +180,40 @@ impl GroupsIdx {
 
         let take_first = || idx_vals.iter().map(|v| v[1]).collect_trusted::<Vec<_>>();
         let take_all = || {
-            idx_vals
-                .iter()
-                .map(|v| unsafe {
-                    let idx = v[0] as usize;
-                    std::mem::take(self.all.get_unchecked_mut(idx))
-                })
-                .collect_trusted::<Vec<_>>()
+            let all = Vec::<IdxSize>::with_capacity(self.all.len());
+            let indexes = {
+                let mut v = Vec::with_capacity(self.indexes.len());
+                v.push(self.indexes[0]);
+                v
+            };
+
+            let (all, indexes) = idx_vals.iter().map(|[old_idx, _]| *old_idx).fold(
+                (all, indexes),
+                |(mut all, mut indexes), old_idx| {
+                    let old_idx = old_idx as usize;
+                    let old_idx_start = self.indexes[old_idx] as usize;
+                    let old_idx_end = self.indexes[old_idx + 1] as usize;
+
+                    all.extend(self.all[old_idx_start..old_idx_end].iter());
+                    indexes.push(all.len() as IdxSize);
+
+                    (all, indexes)
+                },
+            );
+
+            (all, indexes)
         };
-        let (first, all) = POOL.install(|| rayon::join(take_first, take_all));
+
+        let (first, (all, indexes)) = POOL.install(|| rayon::join(take_first, take_all));
         self.first = first;
         self.all = all;
-        self.sorted = true
+        self.indexes = indexes;
+        self.sorted = true;
+
+        debug_assert_eq!(
+            verify_groups_idx(&self.first, &self.all, &self.indexes),
+            VerifyGroupsIdx::Ok
+        );
     }
 
     pub fn is_sorted_flag(&self) -> bool {
@@ -205,8 +277,7 @@ impl FromIterator<IdxItem> for GroupsIdx {
         iter.into_iter().fold(result, |mut res, v| {
             res.first.push(v.0);
             res.all.extend(v.1.iter());
-            let new_idx = res.indexes.last().unwrap().clone() + (v.1.len() as IdxSize);
-            res.indexes.push(new_idx);
+            res.indexes.push(res.all.len() as IdxSize);
             return res;
         })
     }
@@ -217,6 +288,7 @@ pub mod groupsidx_iter {
 
     use super::{BorrowIdxItem, GroupsIdx, IdxItem};
 
+    #[derive(Debug)]
     pub struct BorrowedIter<'a> {
         pub(crate) orig: &'a GroupsIdx,
         pub(crate) start_idx: usize,
@@ -227,14 +299,19 @@ pub mod groupsidx_iter {
         type Item = BorrowIdxItem<'a>;
 
         fn next(&mut self) -> Option<Self::Item> {
-            if self.start_idx >= std::cmp::min(self.end_idx, self.orig.len()) {
+            if self.start_idx >= self.end_idx.min(self.orig.len()) {
                 return None;
             }
 
-            // Safety: first_idx is checked above
+            // Safety: start_idx is checked above
             let result = unsafe { self.orig.get_unchecked(self.start_idx) };
             self.start_idx += 1;
             Some(result)
+        }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let len = self.len();
+            (len, Some(len))
         }
     }
 
@@ -342,14 +419,15 @@ pub mod groupsidx_par_iter {
         }
 
         fn split_at(self, index: usize) -> (Self, Self) {
+            let split_idx = std::cmp::min(self.iter.start_idx + index, self.iter.end_idx);
             let left = groupsidx_iter::BorrowedIter {
                 orig: self.iter.orig,
                 start_idx: self.iter.start_idx,
-                end_idx: index,
+                end_idx: split_idx,
             };
             let right = groupsidx_iter::BorrowedIter {
                 orig: self.iter.orig,
-                start_idx: index,
+                start_idx: split_idx,
                 end_idx: self.iter.end_idx,
             };
             (Self { iter: left }, Self { iter: right })
@@ -454,10 +532,15 @@ impl GroupsProxy {
             GroupsProxy::Idx(groups) => groups,
             GroupsProxy::Slice { groups, .. } => {
                 polars_warn!("Had to reallocate groups, missed an optimization opportunity. Please open an issue.");
-                groups
+                let result: GroupsIdx = groups
                     .iter()
                     .map(|&[first, len]| (first, (first..first + len).collect_trusted::<Vec<_>>()))
-                    .collect()
+                    .collect();
+                debug_assert_eq!(
+                    verify_groups_idx(&result.first, &result.all, &result.indexes),
+                    VerifyGroupsIdx::Ok
+                );
+                result
             },
         }
     }
@@ -664,9 +747,8 @@ impl GroupsProxy {
                 };
 
                 let all = unsafe {
-                    let all = slice_slice(groups.all(), offset, len);
-                    let ptr = all.as_ptr() as *mut _;
-                    Vec::from_raw_parts(ptr, all.len(), all.len())
+                    let ptr = groups.all().as_ptr() as *mut _;
+                    Vec::from_raw_parts(ptr, groups.all().len(), groups.all().len())
                 };
 
                 let indexes = unsafe {
