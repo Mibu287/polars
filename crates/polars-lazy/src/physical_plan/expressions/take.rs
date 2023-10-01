@@ -74,10 +74,15 @@ impl PhysicalExpr for TakeExpr {
                 // Determine the take indices.
                 let idx: IdxCa = match groups.as_ref() {
                     GroupsProxy::Idx(groups) => {
-                        if groups.all().iter().zip(idx).any(|(g, idx)| match idx {
-                            None => true,
-                            Some(idx) => idx >= g.len() as IdxSize,
-                        }) {
+                        if groups
+                            .iter()
+                            .map(|v| v.1)
+                            .zip(idx)
+                            .any(|(g, idx)| match idx {
+                                None => true,
+                                Some(idx) => idx >= g.len() as IdxSize,
+                            })
+                        {
                             self.oob_err()?;
                         }
 
@@ -129,7 +134,11 @@ impl PhysicalExpr for TakeExpr {
                             // We offset the groups first by idx.
                             let idx: NoNull<IdxCa> = match groups.as_ref() {
                                 GroupsProxy::Idx(groups) => {
-                                    if groups.all().iter().any(|g| idx >= g.len() as IdxSize) {
+                                    if groups
+                                        .iter()
+                                        .map(|v| v.1)
+                                        .any(|g| idx >= g.len() as IdxSize)
+                                    {
                                         self.oob_err()?;
                                     }
 

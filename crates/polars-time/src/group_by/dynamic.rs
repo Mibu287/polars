@@ -629,7 +629,7 @@ fn update_subgroups_slice(sub_groups: &[[IdxSize; 2]], base_g: [IdxSize; 2]) -> 
 
 fn update_subgroups_idx(
     sub_groups: &[[IdxSize; 2]],
-    base_g: (IdxSize, &Vec<IdxSize>),
+    base_g: (IdxSize, &[IdxSize]),
 ) -> Vec<(IdxSize, Vec<IdxSize>)> {
     sub_groups
         .iter()

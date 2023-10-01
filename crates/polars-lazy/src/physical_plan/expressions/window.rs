@@ -67,7 +67,7 @@ impl WindowExpr {
             let mut iter = 0..flattened.len() as IdxSize;
             match ac.groups().as_ref() {
                 GroupsProxy::Idx(groups) => {
-                    for g in groups.all() {
+                    for g in groups.iter().map(|v| v.1) {
                         idx_mapping.extend(g.iter().copied().zip(&mut iter));
                     }
                 },
@@ -84,7 +84,7 @@ impl WindowExpr {
             let mut original_idx = Vec::with_capacity(out_column.len());
             match gb.get_groups() {
                 GroupsProxy::Idx(groups) => {
-                    for g in groups.all() {
+                    for g in groups.iter().map(|v| v.1) {
                         original_idx.extend_from_slice(g)
                     }
                 },
@@ -99,7 +99,7 @@ impl WindowExpr {
 
             match ac.groups().as_ref() {
                 GroupsProxy::Idx(groups) => {
-                    for g in groups.all() {
+                    for g in groups.iter().map(|v| v.1) {
                         idx_mapping.extend(g.iter().copied().zip(&mut original_idx_iter));
                     }
                 },
@@ -689,7 +689,7 @@ where
     let mut iter = 0..len as IdxSize;
     match groups {
         GroupsProxy::Idx(groups) => {
-            for g in groups.all() {
+            for g in groups.iter().map(|v| v.1) {
                 idx_mapping.extend((&mut iter).take(g.len()).zip(g.iter().copied()));
             }
         },
@@ -713,7 +713,7 @@ where
                 POOL.install(|| {
                     agg_vals
                         .par_iter()
-                        .zip(groups.all().par_iter())
+                        .zip(groups.par_iter().map(|v| v.1))
                         .for_each(|(v, g)| {
                             let ptr = sync_ptr_values.get();
                             for idx in g {
@@ -761,28 +761,29 @@ where
                 let offset = *offset;
                 let offset_len = *offset_len;
                 let ca = ca.slice(offset as i64, offset_len);
-                let groups = &groups.all()[offset..offset + offset_len];
                 let values_ptr = sync_ptr_values.get();
                 let validity_ptr = sync_ptr_validity.get();
 
-                ca.into_iter().zip(groups.iter()).for_each(|(opt_v, g)| {
-                    for idx in g {
-                        let idx = *idx as usize;
-                        debug_assert!(idx < len);
-                        unsafe {
-                            match opt_v {
-                                Some(v) => {
-                                    *values_ptr.add(idx) = v;
-                                    *validity_ptr.add(idx) = true;
-                                },
-                                None => {
-                                    *values_ptr.add(idx) = T::Native::default();
-                                    *validity_ptr.add(idx) = false;
-                                },
-                            };
+                ca.into_iter()
+                    .zip(groups.sliced_iter(offset, offset + offset_len).map(|v| v.1))
+                    .for_each(|(opt_v, g)| {
+                        for idx in g {
+                            let idx = *idx as usize;
+                            debug_assert!(idx < len);
+                            unsafe {
+                                match opt_v {
+                                    Some(v) => {
+                                        *values_ptr.add(idx) = v;
+                                        *validity_ptr.add(idx) = true;
+                                    },
+                                    None => {
+                                        *values_ptr.add(idx) = T::Native::default();
+                                        *validity_ptr.add(idx) = false;
+                                    },
+                                };
+                            }
                         }
-                    }
-                })
+                    })
             }),
             GroupsProxy::Slice { groups, .. } => {
                 offsets.par_iter().for_each(|(offset, offset_len)| {
