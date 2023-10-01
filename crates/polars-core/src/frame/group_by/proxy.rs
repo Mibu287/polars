@@ -152,6 +152,18 @@ impl GroupsIdx {
         self.into_iter()
     }
 
+    pub fn sliced_iter(
+        &self,
+        start_idx: usize,
+        end_idx: usize,
+    ) -> groupsidx_iter::BorrowedIter<'_> {
+        groupsidx_iter::BorrowedIter {
+            orig: self,
+            start_idx,
+            end_idx,
+        }
+    }
+
     pub fn indexes(&self) -> &Vec<IdxSize> {
         &self.indexes
     }
@@ -267,6 +279,12 @@ pub mod groupsidx_iter {
             Some((first, all))
         }
     }
+
+    impl ExactSizeIterator for OwnedIter {
+        fn len(&self) -> usize {
+            self.iter.len()
+        }
+    }
 }
 
 impl<'a> IntoIterator for &'a GroupsIdx {
@@ -304,8 +322,10 @@ impl FromParallelIterator<IdxItem> for GroupsIdx {
 }
 
 pub mod groupsidx_par_iter {
-    use rayon::iter::plumbing::{bridge_producer_consumer, Producer, UnindexedConsumer};
-    use rayon::prelude::ParallelIterator;
+    use rayon::iter::plumbing::{
+        bridge_producer_consumer, Consumer, Producer, ProducerCallback, UnindexedConsumer,
+    };
+    use rayon::prelude::{IndexedParallelIterator, ParallelIterator};
 
     use super::{groupsidx_iter, BorrowIdxItem, GroupsIdx};
 
@@ -358,6 +378,28 @@ pub mod groupsidx_par_iter {
             let number_of_items = self.iter.len();
             let producer = BorrowedProducer { iter: self.iter };
             bridge_producer_consumer(number_of_items, producer, consumer)
+        }
+    }
+
+    impl<'a> IndexedParallelIterator for BorrowedParIter<'a> {
+        fn len(&self) -> usize {
+            self.iter.len()
+        }
+
+        fn drive<C>(self, consumer: C) -> C::Result
+        where
+            C: Consumer<Self::Item>,
+        {
+            let number_of_items = self.iter.len();
+            let producer = BorrowedProducer { iter: self.iter };
+            bridge_producer_consumer(number_of_items, producer, consumer)
+        }
+
+        fn with_producer<CB>(self, callback: CB) -> CB::Output
+        where
+            CB: ProducerCallback<Self::Item>,
+        {
+            callback.callback(BorrowedProducer { iter: self.iter })
         }
     }
 }
