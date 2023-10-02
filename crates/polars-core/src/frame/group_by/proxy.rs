@@ -11,7 +11,7 @@ use crate::POOL;
 
 /// Indexes of the groups, the first index is stored separately.
 /// this make sorting fast.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GroupsIdx {
     // Invariants: first.len() + 1 == indexes.len()
     pub(crate) sorted: bool,
@@ -140,6 +140,17 @@ impl From<Vec<Vec<IdxItem>>> for GroupsIdx {
             first,
             all,
             indexes,
+        }
+    }
+}
+
+impl Default for GroupsIdx {
+    fn default() -> Self {
+        Self {
+            sorted: true,
+            first: vec![],
+            all: vec![],
+            indexes: vec![0 as IdxSize],
         }
     }
 }

@@ -205,7 +205,7 @@ impl CategoricalChunked {
             unreachable!()
         };
         if self.is_empty() {
-            return GroupsProxy::Idx(GroupsIdx::new(vec![], vec![], true));
+            return GroupsProxy::Idx(GroupsIdx::default());
         }
         let cats = self.logical();
 
