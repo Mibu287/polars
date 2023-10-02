@@ -483,7 +483,7 @@ impl AggList for StructChunked {
                     groups.len(),
                     Some(self.dtype().clone()),
                 );
-                for idx in groups.all().iter() {
+                for idx in groups.iter_all() {
                     let taken = s.take_slice_unchecked(idx);
                     builder.append_series(&taken).unwrap();
                 }

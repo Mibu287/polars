@@ -224,6 +224,10 @@ impl GroupsIdx {
         self.into_iter()
     }
 
+    pub fn iter_all(&self) -> impl Iterator<Item = &[IdxSize]> {
+        self.iter().map(|v| v.1)
+    }
+
     pub fn sliced_iter(
         &self,
         start_idx: usize,
@@ -355,7 +359,14 @@ pub mod groupsidx_iter {
             self.curr_idx += 1;
             Some((first, all))
         }
+
+        fn size_hint(&self) -> (usize, Option<usize>) {
+            let exact_len = self.len();
+            (exact_len, Some(exact_len))
+        }
     }
+
+    unsafe impl TrustedLen for OwnedIter {}
 
     impl ExactSizeIterator for OwnedIter {
         fn len(&self) -> usize {
