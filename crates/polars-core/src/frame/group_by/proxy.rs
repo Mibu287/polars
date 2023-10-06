@@ -50,8 +50,8 @@ mod internal {
             return VerifyGroupsIdx::LengthErr;
         }
 
-        // indexes must be strictly monotonically increasing
-        if !indexes.windows(2).all(|w| w[0] < w[1]) {
+        // indexes must be monotonically increasing
+        if !indexes.windows(2).all(|w| w[0] <= w[1]) {
             return VerifyGroupsIdx::MonotonicErr;
         }
 
