@@ -146,10 +146,31 @@ where
     new_ca
 }
 
+// Safety requirements: No groups in GroupsIdx::Idx can be empty
+#[cfg(any(feature = "dtype-struct", feature = "group_by_list"))]
+unsafe fn take_group_lasts(groups: GroupsProxy) -> Vec<IdxSize> {
+    match groups {
+        GroupsProxy::Idx(groups) => groups
+            .iter()
+            .map(|(_, all_vals)| {
+                // Safety: all_vals is not empty ==> last_idx is a valid index
+                let last_idx = all_vals.len() - 1;
+                *unsafe { all_vals.get_unchecked(last_idx) }
+            })
+            .collect(),
+        GroupsProxy::Slice { groups, .. } => groups
+            .into_iter()
+            .map(|[first, len]| first + len - 1)
+            .collect(),
+    }
+}
+
 #[cfg(feature = "dtype-struct")]
 fn is_last_distinct_struct(s: &Series) -> PolarsResult<BooleanChunked> {
     let groups = s.group_tuples(true, false)?;
-    let last = groups.take_group_lasts();
+
+    // Safety: GroupsProxy constructed from Series is guaranteed to contain no empty groups
+    let last = unsafe { take_group_lasts(groups)};
     let mut out = MutableBitmap::with_capacity(s.len());
     out.extend_constant(s.len(), false);
 
@@ -165,7 +186,9 @@ fn is_last_distinct_struct(s: &Series) -> PolarsResult<BooleanChunked> {
 #[cfg(feature = "group_by_list")]
 fn is_last_distinct_list(ca: &ListChunked) -> PolarsResult<BooleanChunked> {
     let groups = ca.group_tuples(true, false)?;
-    let last = groups.take_group_lasts();
+
+    // Safety: GroupsProxy constructed from ListChunked is guaranteed to contain no empty groups
+    let last = unsafe { take_group_lasts(groups)};
     let mut out = MutableBitmap::with_capacity(ca.len());
     out.extend_constant(ca.len(), false);
 

@@ -613,31 +613,6 @@ impl GroupsProxy {
         }
     }
 
-    pub fn take_group_lasts(self) -> Vec<IdxSize> {
-        match self {
-            GroupsProxy::Idx(groups) => {
-                if groups.len() <= 1 {
-                    Vec::default()
-                } else {
-                    let indexes = groups.indexes();
-                    let idx_len = indexes.len();
-
-                    // Safety: Bounds are checked
-                    // groups.len() > 1 ==> groups.indexes().len() > 2
-                    // ==> groups.indexes has at least 2 elements
-                    let start_idx = *unsafe { indexes.get_unchecked(idx_len - 2) } as usize;
-                    let end_idx = *unsafe { indexes.get_unchecked(idx_len - 1) } as usize;
-
-                    groups.all[start_idx..end_idx].to_vec()
-                }
-            },
-            GroupsProxy::Slice { groups, .. } => groups
-                .into_iter()
-                .map(|[first, len]| first + len - 1)
-                .collect(),
-        }
-    }
-
     pub fn par_iter(&self) -> GroupsProxyParIter {
         GroupsProxyParIter::new(self)
     }
